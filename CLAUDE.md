@@ -76,3 +76,6 @@ Suggested note format:
 - [Claude] Pushed; Pages live at https://stanley-projects.github.io/SpassConverter/ (HTTP 200 on first poll).
 - [Claude] IndexNow submitted 4 URLs to api.indexnow.org — HTTP 202 Accepted.
 - [Claude] Social preview PNG rendered via headless Edge → C:\Users\HP\Downloads\SpassConverter-social-preview.png (161 KB).
+
+### 2026-10-03
+- [Codex] Added GitHub Actions release builds on master pushes, v* tags and manual dispatch. Uses Java 21 / Android SDK 36.1, validates the Gradle wrapper, runs unit tests, and uploads release APK, AAB and R8 mapping. Optional signing uses four Actions secrets with all-or-none validation and temporary file cleanup; without secrets outputs are unsigned. README documents setup and download steps. App version and publishing remain manual.

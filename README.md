@@ -99,6 +99,34 @@ RELEASE_KEY_ALIAS=youralias
 RELEASE_KEY_PASSWORD=yourkeypassword
 ```
 
+## GitHub Actions release builds
+
+The **Release build** workflow runs on pushes to `master`, pushes of `v*` tags,
+and manually from **Actions → Release build → Run workflow**.
+
+It uses Java 21, the checked-in Gradle wrapper and Android SDK 36.1, runs unit
+tests, and builds the minified release APK and Android App Bundle. Download
+`SpassConverter-release-apk`, `SpassConverter-release-aab`, and the R8 mapping
+from the workflow run's **Artifacts** section. Artifacts are retained for 30 days.
+This workflow builds artifacts; it does not publish a GitHub Release or upload
+to Google Play.
+
+By default the APK and AAB are **unsigned**. An unsigned APK cannot be installed
+until it is signed. To enable signing, add all four repository Actions secrets
+under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+| --- | --- |
+| `RELEASE_KEYSTORE_BASE64` | Base64-encoded contents of your release keystore |
+| `RELEASE_STORE_PASSWORD` | Keystore password |
+| `RELEASE_KEY_ALIAS` | Signing key alias |
+| `RELEASE_KEY_PASSWORD` | Signing key password |
+
+Use the existing app's signing key if the APK must update an installed copy.
+The workflow fails if only some signing secrets are configured. The keystore
+and temporary signing properties are removed after the build and are never
+uploaded as artifacts. App versions remain controlled by `app/build.gradle.kts`.
+
 ---
 
 ## License

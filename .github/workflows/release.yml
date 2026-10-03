@@ -1,0 +1,128 @@
+name: Release build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release APK and App Bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: 'platform-tools platforms;android-36.1 build-tools;36.0.0'
+
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+
+      - name: Configure optional release signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          names = (
+              "RELEASE_KEYSTORE_BASE64", "RELEASE_STORE_PASSWORD",
+              "RELEASE_KEY_ALIAS", "RELEASE_KEY_PASSWORD",
+          )
+          values = {name: os.environ.get(name, "") for name in names}
+          if not any(values.values()):
+              print("::notice::No signing secrets configured; release outputs will be unsigned.")
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write("Release APK and AAB are **unsigned**. Sign before installing or publishing.\n")
+          else:
+              missing = [name for name, value in values.items() if not value]
+              if missing:
+                  raise SystemExit("Incomplete signing configuration; missing: " + ", ".join(missing))
+              keystore = Path(os.environ["RUNNER_TEMP"]) / "release.keystore"
+              keystore.touch(mode=0o600)
+              encoded = "".join(values["RELEASE_KEYSTORE_BASE64"].split())
+              keystore.write_bytes(base64.b64decode(encoded, validate=True))
+              properties = {
+                  "RELEASE_STORE_FILE": str(keystore),
+                  "RELEASE_STORE_PASSWORD": values["RELEASE_STORE_PASSWORD"],
+                  "RELEASE_KEY_ALIAS": values["RELEASE_KEY_ALIAS"],
+                  "RELEASE_KEY_PASSWORD": values["RELEASE_KEY_PASSWORD"],
+              }
+              # Escape UTF-16 code units for java.util.Properties, including
+              # spaces, backslashes, newlines and non-ASCII passwords.
+              def escape(value):
+                  data = value.encode("utf-16-be")
+                  return "".join(
+                      "\\u%04x" % int.from_bytes(data[i:i + 2], "big")
+                      for i in range(0, len(data), 2)
+                  )
+              config = Path("local.properties")
+              config.touch(mode=0o600)
+              config.write_text(
+                  "".join(f"{key}={escape(value)}\n" for key, value in properties.items()),
+                  encoding="ascii",
+              )
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write("Release outputs are signed with the configured keystore.\n")
+          PY
+
+      - name: Run unit tests and build release
+        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleRelease bundleRelease
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SpassConverter-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload release App Bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SpassConverter-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload R8 mapping
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SpassConverter-release-mapping
+          path: app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove signing files
+        if: always()
+        run: rm -f local.properties "$RUNNER_TEMP/release.keystore"
