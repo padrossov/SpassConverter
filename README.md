@@ -106,14 +106,24 @@ and manually from **Actions → Release build → Run workflow**.
 
 It uses Java 21, the checked-in Gradle wrapper and Android SDK 36.1, runs unit
 tests, and builds the minified release APK and Android App Bundle. Download
-`SpassConverter-release-apk`, `SpassConverter-release-aab`, and the R8 mapping
+the APK, AAB, and R8 mapping artifacts
 from the workflow run's **Artifacts** section. Artifacts are retained for 30 days.
 This workflow builds artifacts; it does not publish a GitHub Release or upload
 to Google Play.
 
-By default the APK and AAB are **unsigned**. An unsigned APK cannot be installed
-until it is signed. To enable signing, add all four repository Actions secrets
-under **Settings → Secrets and variables → Actions**:
+Without signing secrets, the workflow generates a temporary test key and uploads
+`SpassConverter-test-signed-apk` and `SpassConverter-test-signed-aab`. Extract the
+APK from the artifact ZIP and open the `.apk` file on Android to install it.
+The APK signature is verified before uploading.
+
+**The test key changes on every run.** These builds cannot update a copy signed
+with another key. Uninstall that copy first if needed; uninstalling deletes its
+app data. Use your own permanent release key for updates and distribution.
+The temporary private key is deleted and is never uploaded.
+
+With all four secrets configured, artifacts are named
+`SpassConverter-release-apk` and `SpassConverter-release-aab`.
+Add repository Actions secrets under **Settings → Secrets and variables → Actions**:
 
 | Secret | Value |
 | --- | --- |

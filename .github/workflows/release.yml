@@ -43,7 +43,8 @@ jobs:
       - name: Set up Gradle and validate wrapper
         uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
 
-      - name: Configure optional release signing
+      - name: Configure release signing
+        id: signing
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
@@ -53,23 +54,43 @@ jobs:
           python3 - <<'PY'
           import base64
           import os
+          import secrets
+          import subprocess
           from pathlib import Path
 
+          os.umask(0o077)
           names = (
               "RELEASE_KEYSTORE_BASE64", "RELEASE_STORE_PASSWORD",
               "RELEASE_KEY_ALIAS", "RELEASE_KEY_PASSWORD",
           )
           values = {name: os.environ.get(name, "") for name in names}
+          keystore = Path(os.environ["RUNNER_TEMP"]) / "release.keystore"
           if not any(values.values()):
-              print("::notice::No signing secrets configured; release outputs will be unsigned.")
-              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-                  summary.write("Release APK and AAB are **unsigned**. Sign before installing or publishing.\n")
+              password = secrets.token_urlsafe(32)
+              subprocess.run([
+                  "keytool", "-genkeypair", "-keystore", str(keystore),
+                  "-storetype", "PKCS12", "-storepass:env", "CI_TEST_KEY_PASSWORD",
+                  "-keypass:env", "CI_TEST_KEY_PASSWORD", "-alias", "ci-test",
+                  "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
+                  "-dname", "CN=SpassConverter CI Test",
+              ], env={**os.environ, "CI_TEST_KEY_PASSWORD": password}, check=True)
+              properties = {
+                  "RELEASE_STORE_FILE": str(keystore),
+                  "RELEASE_STORE_PASSWORD": password,
+                  "RELEASE_KEY_ALIAS": "ci-test",
+                  "RELEASE_KEY_PASSWORD": password,
+              }
+              artifact_prefix = "SpassConverter-test-signed"
+              summary = (
+                  "APK is signed with a temporary test key and can be installed. "
+                  "Each run generates a new key: uninstall an older copy before "
+                  "installing another test build (uninstalling deletes app data). "
+                  "Configure release signing secrets for updates and publishing.\n"
+              )
           else:
               missing = [name for name, value in values.items() if not value]
               if missing:
                   raise SystemExit("Incomplete signing configuration; missing: " + ", ".join(missing))
-              keystore = Path(os.environ["RUNNER_TEMP"]) / "release.keystore"
-              keystore.touch(mode=0o600)
               encoded = "".join(values["RELEASE_KEYSTORE_BASE64"].split())
               keystore.write_bytes(base64.b64decode(encoded, validate=True))
               properties = {
@@ -78,31 +99,38 @@ jobs:
                   "RELEASE_KEY_ALIAS": values["RELEASE_KEY_ALIAS"],
                   "RELEASE_KEY_PASSWORD": values["RELEASE_KEY_PASSWORD"],
               }
-              # Escape UTF-16 code units for java.util.Properties, including
-              # spaces, backslashes, newlines and non-ASCII passwords.
-              def escape(value):
-                  data = value.encode("utf-16-be")
-                  return "".join(
-                      "\\u%04x" % int.from_bytes(data[i:i + 2], "big")
-                      for i in range(0, len(data), 2)
-                  )
-              config = Path("local.properties")
-              config.touch(mode=0o600)
-              config.write_text(
-                  "".join(f"{key}={escape(value)}\n" for key, value in properties.items()),
-                  encoding="ascii",
+              artifact_prefix = "SpassConverter-release"
+              summary = "Release outputs are signed with the configured keystore.\n"
+
+          # Preserve special characters for java.util.Properties.
+          def escape(value):
+              data = value.encode("utf-16-be")
+              return "".join(
+                  "\\u%04x" % int.from_bytes(data[i:i + 2], "big")
+                  for i in range(0, len(data), 2)
               )
-              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-                  summary.write("Release outputs are signed with the configured keystore.\n")
+          Path("local.properties").write_text(
+              "".join(f"{key}={escape(value)}\n" for key, value in properties.items()),
+              encoding="ascii",
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"artifact_prefix={artifact_prefix}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
           PY
 
       - name: Run unit tests and build release
         run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleRelease bundleRelease
 
+      - name: Verify installable APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            app/build/outputs/apk/release/app-release.apk
+
       - name: Upload release APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: SpassConverter-release-apk
+          name: ${{ steps.signing.outputs.artifact_prefix }}-apk
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
@@ -110,7 +138,7 @@ jobs:
       - name: Upload release App Bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: SpassConverter-release-aab
+          name: ${{ steps.signing.outputs.artifact_prefix }}-aab
           path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
           retention-days: 30
