@@ -79,3 +79,4 @@ Suggested note format:
 
 ### 2026-10-03
 - [Codex] Added GitHub Actions release builds on master pushes, v* tags and manual dispatch. Uses Java 21 / Android SDK 36.1, validates the Gradle wrapper, runs unit tests, and uploads release APK, AAB and R8 mapping. Optional signing uses four Actions secrets with all-or-none validation and temporary file cleanup; without secrets outputs are unsigned. README documents setup and download steps. App version and publishing remain manual.
+- [Codex] First CI run exposed a pre-existing Windows-only org.gradle.java.home setting. Removed the absolute path from gradle.properties so builds use the configured Gradle JVM / JAVA_HOME across platforms.
